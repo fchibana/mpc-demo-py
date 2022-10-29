@@ -18,7 +18,7 @@ ang_vel_min = -ang_vel_max  # Min angular velocity [rad/s]
 
 
 # Horizon and simulation specs
-N_LA = 2        # Number of look-ahead steps (waypoints inside the horizon)
+N_LA = 2  # Number of look-ahead steps (waypoints inside the horizon)
 TIME_STEP = 0.2  # Time interval between look-ahead steps [s]
 LENGTH_STEP = lin_vel_max * TIME_STEP  # Trajectory bin [m]
 
@@ -32,7 +32,6 @@ class Simulation:
         # StVec target(cx.back(), cy.back(), cyaw.back());
         target = [self.course.x[-1], self.course.y[-1], self.course.yaw[-1]]
 
-        
         # double t_i{0.0};
         # StVec st_i{st_ini};
         # ConVec con_i = ConVec::Zero();
@@ -73,14 +72,11 @@ class Simulation:
         # std::tie(obst_x, obst_y, obst_z) = get_obstacles_plot(obst_poses);
 
         # int target_ind{calc_nearest_index(st_i, cx, cy, 0)};
-        
 
-    
         return
 
     def plot_results(self) -> None:
         # void plot_results(Vec &t, Vec &cx, Vec &cy, Vec &x, Vec &y, Vec &v, Vec &omega) {
-
 
         # plt::close();
         # plt::plot(t, v, {{"label", "v [m/s]"}});

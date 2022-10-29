@@ -1,15 +1,32 @@
-from mpc_demo.simulation import Simulation
-from mpc_demo.casadi_solver import nlp_solution, get_mpc_args
+import casadi as ca
+
+from mpc_demo.casadi_solver import Solver
 
 
-def main():
+n_states = 3
+n_la = 1
 
-    # simulation = Simulation("straight")
-    # simulation.run()
-    # simulation.plot_results()
-    # nlp_solution()
-    get_mpc_args()
+# X = ca.SX.sym("X", n_states, n_la + 1)
 
+# print(X)
 
-if __name__ == "__main__":
-    main()
+# P = ca.SX.sym("P", n_states * (n_la + 1))
+# print(P)
+
+# print(X[:, 0])
+# print(P[: n_states])
+# print(X[:, 0] - P[: n_states])
+
+solver = Solver()
+
+# solver._get_nlp_solver()
+
+# X = ca.SX.sym("X", n_states, n_la + 1)
+# U = ca.SX.sym("U", 2, n_la)
+# P = ca.SX.sym("P", n_states * (n_la + 1))
+
+# solver._cost_function(X, U, P)
+
+# solver._constraint_equations(X, U, P)
+
+solver.solve()

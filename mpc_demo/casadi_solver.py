@@ -27,12 +27,6 @@ class Solver:
         self._weight_v = 0.05
         self._weight_omega = 0.05
 
-        # Q_x = 0.99
-        # Q_y = 0.99
-        # Q_yaw = 0.1
-        # R_v = 0.05
-        # R_omega = 0.05
-
     def solve(self):
         # std::tuple<StMat, ConMat> mpc_control(StVec st_i, StMat X_i, ConMat U_i, StMat X_ref) {
         #   // Tested 210405
@@ -77,30 +71,34 @@ class Solver:
             _type_: _description_
         """
         # matrix containing all states over all time steps +1 (each column is a state vector)
-        X = ca.SX.sym('X', self._n_states, self._n_la + 1)
+        X = ca.SX.sym("X", self._n_states, self._n_la + 1)
         # matrix containing all control actions over all time steps (each column is an control vector)
-        U = ca.SX.sym('U', self._n_controls, self._n_la)
+        U = ca.SX.sym("U", self._n_controls, self._n_la)
         # parameters vector (robot's initial pose + reference poses along the path)
-        P = ca.SX.sym('P', self._n_states * (self._n_la + 1))
+        P = ca.SX.sym("P", self._n_states * (self._n_la + 1))
 
         nlp_prob = {
-            'x': ca.vertcat(X.reshape((-1, 1)), U.reshape((-1, 1))),
+            "x": ca.vertcat(X.reshape((-1, 1)), U.reshape((-1, 1))),
             "p": P,
             "f": self._cost_function(X, U, P),
-            "g": self._constraint_equations(X, U, P)
+            "g": self._constraint_equations(X, U, P),
         }
         print(nlp_prob)
         # solver options
-        opts = {'ipopt': {'max_iter': 2000,
-                          'print_level': 0,
-                          'acceptable_tol': 1e-8,
-                          'acceptable_obj_change_tol': 1e-6},
-                'print_time': 0}
+        opts = {
+            "ipopt": {
+                "max_iter": 2000,
+                "print_level": 0,
+                "acceptable_tol": 1e-8,
+                "acceptable_obj_change_tol": 1e-6,
+            },
+            "print_time": 0,
+        }
 
-        return ca.nlpsol('solver', 'ipopt', nlp_prob, opts)
+        return ca.nlpsol("solver", "ipopt", nlp_prob, opts)
 
     def _cost_function(self, x: ca.SX, u: ca.SX, p: ca.SX) -> ca.SX:
-        """ Compute the cost function in terms of the symbolic variable.
+        """Compute the cost function in terms of the symbolic variable.
 
         Note that the cost function does not depend on x[:, 0]. This vector is determined by the
         initial constraint x[:, 0] = st_ini, the current pose of the vehicle.
@@ -125,7 +123,7 @@ class Solver:
 
         for k in range(self._n_la + 1):
             st = x[:, k]
-            st_ref = p[k * self._n_states: (k + 1) * self._n_states]
+            st_ref = p[k * self._n_states : (k + 1) * self._n_states]
             assert st.shape == st_ref.shape
 
             # state cost function: weighted squared difference between estimated and reference poses
@@ -157,7 +155,7 @@ class Solver:
             ca.SX: symbolic vector representing the constraint equations
         """
         # initial constraint
-        g = x[:, 0] - p[:self._n_states]
+        g = x[:, 0] - p[: self._n_states]
 
         # # kinematic constraints
         for k in range(self._n_la):
@@ -168,7 +166,6 @@ class Solver:
         return g
 
     def _rk4(self, state, control, dt):
-
         def differential_drive(state, control):
             yaw = state[2]
             v = control[0]
@@ -186,13 +183,12 @@ class Solver:
         state_next = state + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * dt / 6.0
         return state_next
 
-
-    def _get_nlp_args(self, st_i, X, U, X_ref):
+    def _get_nlp_args(self, st, x, u, x_ref):
         """
         Compute dictionary with MPC arguments used by the NLP solver.
 
         st_i is not an optimization variable. st_i != X(:, 0)
-        It is needed to compute P   
+        It is needed to compute P
 
         Args:
             st_i (_type_): _description_
@@ -201,19 +197,29 @@ class Solver:
             X_ref (_type_): _description_
         """
 
-        # Initialize vectors with lower and upper bound fro the optimization variables
-        lbx = ca.DM.zeros((self._n_states * (self._n_la+1) + self._n_controls * self._n_la, 1))
-        ubx = ca.DM.zeros((self._n_states * (self._n_la + 1) + self._n_controls*self._n_la, 1))
+        # initial conditions for decision variables (states + controls)
+        x0 = ca.vertcat(
+            ca.reshape(x, self._n_states * (self._n_la + 1), 1),
+            ca.reshape(u, self._n_controls * self._n_la, 1)
+        )
+
+        # Initialize vectors with lower and upper bound for the optimization variables
+        lbx = ca.DM.zeros(
+            (self._n_states * (self._n_la + 1) + self._n_controls * self._n_la, 1)
+        )
+        ubx = ca.DM.zeros(
+            (self._n_states * (self._n_la + 1) + self._n_controls * self._n_la, 1)
+        )
 
         # lower bounds for the 2d pose (x, y, yaw)
-        lbx[0: self._n_states*(self._n_la+1): self._n_states] = -ca.inf
-        lbx[1: self._n_states*(self._n_la+1): self._n_states] = -ca.inf
-        lbx[2: self._n_states*(self._n_la+1): self._n_states] = -ca.inf
+        lbx[0 : self._n_states * (self._n_la + 1) : self._n_states] = -ca.inf
+        lbx[1 : self._n_states * (self._n_la + 1) : self._n_states] = -ca.inf
+        lbx[2 : self._n_states * (self._n_la + 1) : self._n_states] = -ca.inf
 
         # upper bounds for the 2d pose
-        ubx[0: self._n_states*(self._n_la+1): self._n_states] = ca.inf
-        ubx[1: self._n_states*(self._n_la+1): self._n_states] = ca.inf
-        ubx[2: self._n_states*(self._n_la+1): self._n_states] = ca.inf
+        ubx[0 : self._n_states * (self._n_la + 1) : self._n_states] = ca.inf
+        ubx[1 : self._n_states * (self._n_la + 1) : self._n_states] = ca.inf
+        ubx[2 : self._n_states * (self._n_la + 1) : self._n_states] = ca.inf
 
         # Define some kinematic constants
         # TODO: define these some place else
@@ -227,53 +233,26 @@ class Solver:
         omega_max = ang_vel_max
 
         # lower bounds for the controls (v, omega)
-        lbx[self._n_states*(self._n_la+1):: self._n_controls] = v_min
-        lbx[self._n_states*(self._n_la+1) + 1:: self._n_controls] = omega_min
+        lbx[self._n_states * (self._n_la + 1) :: self._n_controls] = v_min
+        lbx[self._n_states * (self._n_la + 1) + 1 :: self._n_controls] = omega_min
 
         # upper bounds for the controls
-        ubx[self._n_states*(self._n_la+1):: self._n_controls] = v_max
-        ubx[self._n_states*(self._n_la+1) + 1:: self._n_controls] = omega_max
+        ubx[self._n_states * (self._n_la + 1) :: self._n_controls] = v_max
+        ubx[self._n_states * (self._n_la + 1) + 1 :: self._n_controls] = omega_max
 
-        # u0 = ca.DM.zeros((n_controls, N))  # initial control
-        # X0 = ca.repmat(ST_I, 1, N+1)         # initial state full
-        #     args['x0'] = ca.vertcat(
-        #         ca.reshape(X0, n_states*(N+1), 1),
-        #         ca.reshape(u0, n_controls*N, 1)
-        #     )
+        p = ca.vertcat(st, ca.reshape(x_ref, self._n_states * (self._n_la + 1), 1))
 
-        #   DM x0; // opt vars
-        #   for (int k = 0; k < N_la + 1; ++k) {
-        #     for (int s = 0; s < n_states; ++s) {
-        #       x0 = vertcat(x0, X(s, k));
-        #     }
-        #   }
-        #   for (int k = 0; k < N_la; ++k) {
-        #     for (int s = 0; s < n_controls; ++s) {
-        #       x0 = vertcat(x0, U(s, k));
-        #     }
-        #   }
+        args = {
+            "x0": x0,
+            "lbx": lbx,
+            "ubx": ubx,
+            "p": p,
+            "lbg": ca.DM.zeros((self._n_states * (self._n_la + 1), 1)),
+            "ubg": ca.DM.zeros((self._n_states * (self._n_la + 1), 1)),
+        }
 
-        #   DM p; // parameters (st_ini, X_ref)
-        #   for (int s = 0; s < n_states; ++s) {
-        # //    p = vertcat(p, X(s, 0));
-        #     p = vertcat(p, st_i(s));
-        #   }
-        #   for (int k = 1; k < N_la + 1; ++k) {
-        #     for (int s = 0; s < n_states; ++s) {
-        #       p = vertcat(p, X_ref(s, k));
-        #     }
-        #   }
+        return args
 
-        #   std::map<std::string, DM> args;
-        #   args["x0"] = x0;
-        #   args["lbx"] = lbx;
-        #   args["ubx"] = ubx;
-        #   args["p"] = p;
-        #   args["lbg"] = DM::zeros(n_states * (N_la + 1), 1);      // constraints lower bound
-        #   args["ubg"] = DM::zeros(n_states * (N_la + 1), 1);      // constraints upper bound
-
-        #   return args;
-        # }
 
 # void test_get_mpc_args() {
 #   StVec st_i(1, 2, 3);
