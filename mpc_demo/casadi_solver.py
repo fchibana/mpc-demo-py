@@ -1,6 +1,7 @@
 import math
 
 import casadi as ca
+import numpy as np
 
 
 # from mpc_demo.simulation import N_STATES, TIME_STEP
@@ -28,7 +29,8 @@ class Solver:
         self._weight_omega = 0.05
 
     def solve(self):
-        # std::tuple<StMat, ConMat> mpc_control(StVec st_i, StMat X_i, ConMat U_i, StMat X_ref) {
+        # std::tuple<StMat, ConMat> mpc_control(
+        # StVec st_i, StMat X_i, ConMat U_i, StMat X_ref) {
         #   // Tested 210405
 
         #   using namespace casadi;
@@ -61,8 +63,26 @@ class Solver:
         #   return {oX, oU};
         # }
 
+        x = np.zeros((self._n_states, self._n_la + 1))
+        u = np.zeros((self._n_controls, self._n_la))
+
+        x_ref = np.zeros((self._n_states, self._n_la + 1))
+        # x_ref[:, 0] = x
+        x_ref[1, 1] = 1.0
+
+        args = self._get_nlp_args(x, u, x_ref)
+        print(args)
+
         solver = self._get_nlp_solver()
-        # args = self._get_nlp_args()
+        res = solver(
+            x0=args["x0"],
+            lbx=args["lbx"],
+            ubx=args["ubx"],
+            lbg=args["lbg"],
+            ubg=args["ubg"],
+            p=args["p"],
+        )
+        print(res)
 
     def _get_nlp_solver(self) -> ca.Function:
         """Set up NLP problem symbolically and returns the solver object.
@@ -70,9 +90,11 @@ class Solver:
         Returns:
             _type_: _description_
         """
-        # matrix containing all states over all time steps +1 (each column is a state vector)
+        # matrix containing all states over all time steps +1
+        # (each column is a state vector)
         X = ca.SX.sym("X", self._n_states, self._n_la + 1)
-        # matrix containing all control actions over all time steps (each column is an control vector)
+        # matrix containing all control actions over all time steps
+        # (each column is an control vector)
         U = ca.SX.sym("U", self._n_controls, self._n_la)
         # parameters vector (robot's initial pose + reference poses along the path)
         P = ca.SX.sym("P", self._n_states * (self._n_la + 1))
@@ -100,10 +122,12 @@ class Solver:
     def _cost_function(self, x: ca.SX, u: ca.SX, p: ca.SX) -> ca.SX:
         """Compute the cost function in terms of the symbolic variable.
 
-        Note that the cost function does not depend on x[:, 0]. This vector is determined by the
+        Note that the cost function does not depend on x[:, 0]. This vector is
+        determined by the
         initial constraint x[:, 0] = st_ini, the current pose of the vehicle.
 
-        Also note that the reference control is zero. This means we want to solve the optimization
+        Also note that the reference control is zero. This means we want to solve the
+        optimization
         problem with the lowest speed possible.
 
         Args:
@@ -126,7 +150,8 @@ class Solver:
             st_ref = p[k * self._n_states : (k + 1) * self._n_states]
             assert st.shape == st_ref.shape
 
-            # state cost function: weighted squared difference between estimated and reference poses
+            # state cost function: weighted squared difference between estimated and
+            # reference poses
             if k != 0:
                 cost_fn += (st - st_ref).T @ q @ (st - st_ref)
 
@@ -142,8 +167,10 @@ class Solver:
 
         In total there are n_states * (n_la + 1) constraints, divided into two types:
         1. initial constraint: x[:, 0] = st_ini, the current pose of the vehicle;
-        2. kinematic constraints: x[:, i+1] = f(x[:, i], u[:, i]), for i = 0, ..., n_la-1, where
-           f(.) is the discretized evolution equation that describes the pose at the next step given
+        2. kinematic constraints: x[:, i+1] = f(x[:, i], u[:, i]), for i = 0, ...,
+        n_la-1, where
+           f(.) is the discretized evolution equation that describes the pose at the
+           next step given
            the current pose and velocity control.
 
         Args:
@@ -183,15 +210,14 @@ class Solver:
         state_next = state + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * dt / 6.0
         return state_next
 
-    def _get_nlp_args(self, st, x, u, x_ref):
+    def _get_nlp_args(self, x, u, x_ref):
         """
         Compute dictionary with MPC arguments used by the NLP solver.
 
-        st_i is not an optimization variable. st_i != X(:, 0)
+        X_ref(:, 0) = st_i is not an optimization variable. st_i != X(:, 0)
         It is needed to compute P
 
         Args:
-            st_i (_type_): _description_
             X (_type_): _description_
             U (_type_): _description_
             X_ref (_type_): _description_
@@ -200,7 +226,7 @@ class Solver:
         # initial conditions for decision variables (states + controls)
         x0 = ca.vertcat(
             ca.reshape(x, self._n_states * (self._n_la + 1), 1),
-            ca.reshape(u, self._n_controls * self._n_la, 1)
+            ca.reshape(u, self._n_controls * self._n_la, 1),
         )
 
         # Initialize vectors with lower and upper bound for the optimization variables
@@ -240,7 +266,7 @@ class Solver:
         ubx[self._n_states * (self._n_la + 1) :: self._n_controls] = v_max
         ubx[self._n_states * (self._n_la + 1) + 1 :: self._n_controls] = omega_max
 
-        p = ca.vertcat(st, ca.reshape(x_ref, self._n_states * (self._n_la + 1), 1))
+        p = ca.reshape(x_ref, self._n_states * (self._n_la + 1), 1)
 
         args = {
             "x0": x0,
@@ -279,7 +305,8 @@ class Solver:
 #   std::cerr << "p: " << args["p"] << '\n';
 # }
 
-# std::tuple<StMat, ConMat> mpc_control(StVec st_i, StMat X_i, ConMat U_i, StMat X_ref) {
+# std::tuple<StMat, ConMat> mpc_control(StVec st_i, StMat X_i, ConMat U_i, StMat X_ref)
+# {
 #   // Tested 210405
 
 #   using namespace casadi;
