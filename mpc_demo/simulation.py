@@ -1,7 +1,8 @@
 import math
 
 import matplotlib.pyplot as plt
-import numpy as np
+
+# import numpy as np
 
 from mpc_demo.spline_planner import SplinePlanner
 
@@ -18,7 +19,7 @@ ang_vel_min = -ang_vel_max  # Min angular velocity [rad/s]
 
 
 # Horizon and simulation specs
-N_LA = 2        # Number of look-ahead steps (waypoints inside the horizon)
+N_LA = 2  # Number of look-ahead steps (waypoints inside the horizon)
 TIME_STEP = 0.2  # Time interval between look-ahead steps [s]
 LENGTH_STEP = lin_vel_max * TIME_STEP  # Trajectory bin [m]
 
@@ -30,9 +31,8 @@ class Simulation:
 
     def run(self) -> None:
         # StVec target(cx.back(), cy.back(), cyaw.back());
-        target = [self.course.x[-1], self.course.y[-1], self.course.yaw[-1]]
+        # target = [self.course.x[-1], self.course.y[-1], self.course.yaw[-1]]
 
-        
         # double t_i{0.0};
         # StVec st_i{st_ini};
         # ConVec con_i = ConVec::Zero();
@@ -41,13 +41,13 @@ class Simulation:
         # for (int k = 0; k < X_i.cols(); ++k) {
         #     X_i.col(k) = st_i;
         # }
-        t_i = 0.0
-        st_i = [self.course.x[0], self.course.y[0], self.course.yaw[0]]
-        con_i = [0, 0]
-        U_i = np.zeros((N_CONTROLS, N_LA))
-        X_i = np.zeros((N_STATES, N_LA + 1))
-        for i in range(N_LA + 1):
-            X_i[:, i] = st_i
+        # t_i = 0.0
+        # st_i = [self.course.x[0], self.course.y[0], self.course.yaw[0]]
+        # con_i = [0, 0]
+        # U_i = np.zeros((N_CONTROLS, N_LA))
+        # X_i = np.zeros((N_STATES, N_LA + 1))
+        # for i in range(N_LA + 1):
+        #     X_i[:, i] = st_i
 
         # Eigen::Matrix2d vel_bounds;
         # vel_bounds << parameters::lin_vel_min, parameters::lin_vel_max,
@@ -73,14 +73,12 @@ class Simulation:
         # std::tie(obst_x, obst_y, obst_z) = get_obstacles_plot(obst_poses);
 
         # int target_ind{calc_nearest_index(st_i, cx, cy, 0)};
-        
 
-    
         return
 
     def plot_results(self) -> None:
-        # void plot_results(Vec &t, Vec &cx, Vec &cy, Vec &x, Vec &y, Vec &v, Vec &omega) {
-
+        # void plot_results(
+        # Vec &t, Vec &cx, Vec &cy, Vec &x, Vec &y, Vec &v, Vec &omega) {
 
         # plt::close();
         # plt::plot(t, v, {{"label", "v [m/s]"}});

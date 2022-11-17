@@ -88,7 +88,7 @@ class SplinePlanner:
 
             dx = x_out[-1] - x_goal
             dy = y_out[-1] - y_goal
-            d = math.sqrt(dx ** 2 + dy ** 2)
+            d = math.sqrt(dx**2 + dy**2)
 
             print(f" Iteration: {n_iter}\n Distance: {d}")
             if d > distance_thresh:
