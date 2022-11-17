@@ -4,36 +4,52 @@ Problem: point stabilization
 """
 
 from time import time
+
 import casadi as ca
 import numpy as np
-from casadi import sin, cos, pi
+# from casadi import sin, cos, pi
+
 from mpc_demo.simulation_code import simulate
 
 
-def rk4(f, x, u, dt):
-    k1 = f(x, u)
-    k2 = f(x + k1 * dt / 2, u)
-    k3 = f(x + k2 * dt / 2, u)
-    k4 = f(x + k3 * dt, u)
-    x_next = x + (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6
+def rk4(st, con, dt):
 
-    return x_next
+    def differential_drive(state, control):
+        yaw = state[2]
+        v = control[0]
+        omega = control[1]
+
+        # dx/dt, dy/dt, dyaw/dt
+        rhs = ca.vertcat(v * ca.cos(yaw), v * ca.sin(yaw), omega)
+        return ca.Function("f", [state, control], [rhs])
+
+    state = ca.vertcat(ca.SX.sym("x"), ca.SX.sym("y"), ca.SX.sym("theta"))
+    control = ca.vertcat(ca.SX.sym("v"), ca.SX.sym("omega"))
+    f = differential_drive(state, control)
+
+    k1 = f(st, con)
+    k2 = f(st + k1 * dt / 2.0, con)
+    k3 = f(st + k2 * dt / 2.0, con)
+    k4 = f(st + k3 * dt, con)
+
+    state_next = st + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * dt / 6.0
+    return state_next
 
 
 def DM2Arr(dm):
     return np.array(dm.full())
 
 
-def diff_drive(states, controls):
+# def diff_drive(states, controls):
 
-    theta = states[2]
-    v = controls[0]
-    omega = controls[1]
+#     theta = states[2]
+#     v = controls[0]
+#     omega = controls[1]
 
-    rhs = ca.vertcat(v * cos(theta), v * sin(theta), omega)
-    f = ca.Function("f", [states, controls], [rhs])
+#     rhs = ca.vertcat(v * ca.cos(theta), v * ca.sin(theta), omega)
+#     f = ca.Function("f", [states, controls], [rhs])
 
-    return f
+#     return f
 
 
 # def mecanum_whell(states, controls):
@@ -68,7 +84,7 @@ def diff_drive(states, controls):
 #     return f
 
 
-def get_nlp_solver(N: int, dt: float) -> ca.Function:
+def get_nlp_solver(N: int, dt: float, n_states: int = 3, n_controls: int = 2) -> ca.Function:
     """Set up NLP problem symbolically and returns the solver function.
 
     Args:
@@ -79,14 +95,6 @@ def get_nlp_solver(N: int, dt: float) -> ca.Function:
         casadi.Function: a function that takes in the nlp args and returns the solution
     """
 
-    # state symbolic variables
-    state = ca.vertcat(ca.SX.sym("x"), ca.SX.sym("y"), ca.SX.sym("theta"))
-    n_states = state.numel()
-
-    # control symbolic variables
-    control = ca.vertcat(ca.SX.sym("v"), ca.SX.sym("omega"))
-    n_controls = control.numel()
-
     # matrix containing all states over all time steps +1 (each column is a state vector)
     X = ca.SX.sym("X", n_states, N + 1)
     # matrix containing all control actions over all time steps (each column is an action vector)
@@ -94,13 +102,10 @@ def get_nlp_solver(N: int, dt: float) -> ca.Function:
     # column vector for storing initial state and target state
     P = ca.SX.sym("P", n_states + n_states)
 
-    # kinematics
-    kinematical_func = diff_drive(state, control)
-
     nlp_prob = {
         "x": ca.vertcat(X.reshape((-1, 1)), U.reshape((-1, 1))),
-        "f": cost_function(n_states, N, X, U, P),
-        "g": constraint_equations(n_states, N, dt, X, U, P, kinematical_func),
+        "f": cost_function(X, U, P),
+        "g": constraint_equations(X, U, P, dt),
         "p": P,
     }
 
@@ -119,7 +124,7 @@ def get_nlp_solver(N: int, dt: float) -> ca.Function:
     return solver
 
 
-def cost_function(n_states, N, X, U, P):
+def cost_function(X, U, P):
 
     Q_x = 1
     Q_y = 1
@@ -130,19 +135,27 @@ def cost_function(n_states, N, X, U, P):
     Q = ca.diagcat(Q_x, Q_y, Q_theta)
     R = ca.diagcat(R_v, R_omega)
 
+    n_states = X.shape[0]
+    N = X.shape[1] - 1
+
     cost_fn = 0
     for k in range(N):
         st = X[:, k]
         con = U[:, k]
+        st_ref = P[n_states:]
 
-        state_loss = (st - P[n_states:]).T @ Q @ (st - P[n_states:])
+        state_loss = (st - st_ref).T @ Q @ (st - st_ref)
         control_loss = con.T @ R @ con
         cost_fn += state_loss + control_loss
 
     return cost_fn
 
 
-def constraint_equations(n_states, N, step_horizon, X, U, P, f):
+def constraint_equations(X, U, P, dt):
+
+    n_states = X.shape[0]
+    N = X.shape[1] - 1
+
     g = X[:, 0] - P[:n_states]  # constraints in the equation
 
     # runge kutta
@@ -151,22 +164,19 @@ def constraint_equations(n_states, N, step_horizon, X, U, P, f):
         con = U[:, k]
 
         st_next = X[:, k + 1]
-        st_next_RK4 = rk4(f, st, con, step_horizon)
+        st_next_RK4 = rk4(st, con, dt)
         g = ca.vertcat(g, st_next - st_next_RK4)
 
     return g
 
 
-def initialize_nlp_args(N: int):
+def initialize_nlp_args(N: int, n_states: int = 3, n_controls: int = 2):
     """
     Define lower and upper bounds for optimization variables and constraint functions.
 
     Args:
         N (int): _description_
     """
-
-    n_states = 3
-    n_controls = 2
 
     # initialize to zero
     lbx = ca.DM.zeros((n_states * (N + 1) + n_controls * N, 1))
@@ -185,7 +195,7 @@ def initialize_nlp_args(N: int):
     # Control bounds
     v_max = 0.6
     v_min = -v_max
-    omega_max = pi / 4
+    omega_max = ca.pi / 4
     omega_min = -omega_max
 
     lbx[n_states * (N + 1):: n_controls] = v_min
@@ -207,9 +217,9 @@ def is_goal_reached(current_state, target_state, tol=1e-1):
     return ca.norm_2(current_state - target_state) < tol
 
 
-def update_state(f, st, con, dt):
+def update_state(st, con, dt):
     # TODO: add noise
-    st_next = rk4(f, st, con, dt)
+    st_next = rk4(st, con, dt)
 
     return st_next
 
@@ -233,20 +243,20 @@ def run(initial_pose: list, target_pose: list, N: int, dt=0.2):
 
     # initialize the decision variables
     # TODO: rename
-    X0 = ca.repmat(current_state, 1, N + 1)
-    u0 = ca.DM.zeros((n_controls, N))
+    initial_states = ca.repmat(current_state, 1, N + 1)
+    initial_controls = ca.DM.zeros((n_controls, N))
 
     # history variables
     # TODO: rename
-    cat_states = DM2Arr(X0)
-    cat_controls = DM2Arr(u0[:, 0])
+    cat_states = DM2Arr(initial_states)
+    cat_controls = DM2Arr(initial_controls[:, 0])
     times = np.array([[0]])
 
     # simulation state
     mpc_iter = 0
 
     nlp_solver = get_nlp_solver(N, dt)
-    nlp_args = initialize_nlp_args(N)
+    nlp_args = initialize_nlp_args(N, n_states, n_controls)
 
     # start a chronometer to time the whole loop
     main_loop = time()  # return time in sec
@@ -254,7 +264,6 @@ def run(initial_pose: list, target_pose: list, N: int, dt=0.2):
     goal_reached = False
 
     while mpc_iter * dt < max_sim_time:
-
         if is_goal_reached(current_state, target_state):
             goal_reached = True
             break
@@ -264,7 +273,8 @@ def run(initial_pose: list, target_pose: list, N: int, dt=0.2):
 
         # update the dictionary with the initial values for the decision variables
         nlp_args["x0"] = ca.vertcat(
-            ca.reshape(X0, n_states * (N + 1), 1), ca.reshape(u0, n_controls * N, 1)
+            ca.reshape(initial_states, n_states * (N + 1), 1),
+            ca.reshape(initial_controls, n_controls * N, 1)
         )
         # update dictionary with the vector of parameters
         nlp_args["p"] = ca.vertcat(current_state, target_state)
@@ -279,32 +289,27 @@ def run(initial_pose: list, target_pose: list, N: int, dt=0.2):
         )
 
         # retrieve optimal states and controls from the solution
-        u = ca.reshape(solution["x"][n_states * (N + 1):], n_controls, N)
-        X0 = ca.reshape(solution["x"][: n_states * (N + 1)], n_states, N + 1)
+        opt_states = ca.reshape(solution["x"][: n_states * (N + 1)], n_states, N + 1)
+        opt_controls = ca.reshape(solution["x"][n_states * (N + 1):], n_controls, N)
 
         # update history variables (for simulation)
-        cat_states = np.dstack((cat_states, DM2Arr(X0)))
-        cat_controls = np.vstack((cat_controls, DM2Arr(u[:, 0])))
+        cat_states = np.dstack((cat_states, DM2Arr(opt_states)))
+        cat_controls = np.vstack((cat_controls, DM2Arr(opt_controls[:, 0])))
         times = np.vstack((times, time() - t1))
 
         # update the state of the vehicle using it's current pose and optimal control
-        # TODO: should add some noise to this step, since it simulates the actual kinematics
-
-        # TODO: fix
-        state = ca.vertcat(ca.SX.sym("x"), ca.SX.sym("y"), ca.SX.sym("theta"))
-        control = ca.vertcat(ca.SX.sym("v"), ca.SX.sym("omega"))
-        f_diff_drive = diff_drive(state, control)
-
-        current_state = update_state(f_diff_drive, current_state, u[:, 0], dt)
-        X0, u0 = update_initial_conditions(X0, u0)
+        current_state = update_state(current_state, opt_controls[:, 0], dt)
+        # update the initial conditions
+        initial_states, initial_controls = update_initial_conditions(opt_states, opt_controls)
 
         mpc_iter += mpc_iter
+
     main_loop_time = time()
     ss_error = ca.norm_2(current_state - target_state)
 
     print("\n\n")
     if not goal_reached:
-        print("Simulations timeout")
+        print("Simulation timeout")
     print("Total time: ", main_loop_time - main_loop)
     print("avg iteration time: ", np.array(times).mean() * 1000, "ms")
     print("final error: ", ss_error)
@@ -334,9 +339,9 @@ def main():
     # Target state
     x_target = 10
     y_target = 10
-    theta_target = -pi / 2
+    theta_target = -ca.pi / 2
 
-    theta_target = theta_target % (2 * pi)
+    theta_target = theta_target % (2 * ca.pi)
 
     initial_pose = [x_init, y_init, theta_init]
     target_pose = [x_target, y_target, theta_target]
