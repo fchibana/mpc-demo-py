@@ -7,8 +7,6 @@ from time import time
 import casadi as ca
 import numpy as np
 from casadi import sin, cos, pi
-import matplotlib.pyplot as plt
-# from simulation_code import simulate
 from mpc_demo.simulation_code import simulate
 
 
@@ -75,7 +73,7 @@ def mecanum_whell(states, controls):
     """
 
     # Robot specs
-    rob_diam = 0.3  # diameter of the robot
+    # rob_diam = 0.3  # diameter of the robot
     wheel_radius = 1  # wheel radius
     Lx = 0.3  # L in J Matrix (half robot x-axis length)
     Ly = 0.3  # l in J Matrix (half robot y-axis length)
@@ -95,8 +93,10 @@ def mecanum_whell(states, controls):
 
     return f
 
-#######################################################################################################################
+#
 # Input vars
+#
+
 
 # Loss function weights
 # State loss function
@@ -139,8 +139,9 @@ omega_max = pi / 4
 omega_min = - omega_max
 
 
-#######################################################################################################################
+#
 # Symbolic
+#
 
 # state symbolic variables
 x = ca.SX.sym('x')
@@ -176,14 +177,14 @@ g = X[:, 0] - P[:n_states]  # constraints in the equation
 
 # runge kutta
 for k in range(N):
-    
+
     st = X[:, k]
     con = U[:, k]
-    
-    state_loss = (st - P[n_states:]).T @ Q @ (st - P[n_states:]) 
+
+    state_loss = (st - P[n_states:]).T @ Q @ (st - P[n_states:])
     control_loss = con.T @ R @ con
     cost_fn += state_loss + control_loss
-    
+
     st_next = X[:, k+1]
     st_next_RK4 = rk4(f, st, con, step_horizon)
     g = ca.vertcat(g, st_next - st_next_RK4)
@@ -206,7 +207,7 @@ opts = {'ipopt': {'max_iter': 2000,
 solver = ca.nlpsol('solver', 'ipopt', nlp_prob, opts)
 
 
-# Define lower and upper bounds for optimization variables 
+# Define lower and upper bounds for optimization variables
 # and constraint functions
 
 lbx = ca.DM.zeros((n_states*(N+1) + n_controls*N, 1))
@@ -231,7 +232,7 @@ args = {'lbg': ca.DM.zeros((n_states*(N+1), 1)),  # constraints lower bound
         'ubx': ubx}
 
 
-## Set up main loop
+# Set up main loop
 
 t0 = 0
 state_init = ca.DM([x_init, y_init, theta_init])        # initial state
@@ -249,19 +250,16 @@ cat_controls = DM2Arr(u0[:, 0])
 times = np.array([[0]])
 
 
-
-
-
 ###############################################################################
 
 if __name__ == '__main__':
-    
+
     main_loop = time()  # return time in sec
-    
+
     while (ca.norm_2(state_init - state_target) > 1e-1) and (mpc_iter * step_horizon < sim_time):
-    
+
         t1 = time()
-        
+
         # current and target states
         args['p'] = ca.vertcat(state_init, state_target)
         # optimization variable current state
@@ -273,13 +271,11 @@ if __name__ == '__main__':
                      lbg=args['lbg'],
                      ubg=args['ubg'],
                      p=args['p'])
-        
 
         u = ca.reshape(sol['x'][n_states * (N + 1):], n_controls, N)
         X0 = ca.reshape(sol['x'][: n_states * (N+1)], n_states, N+1)
 
-        cat_states = np.dstack\
-            ((cat_states, DM2Arr(X0)))
+        cat_states = np.dstack((cat_states, DM2Arr(X0)))
         cat_controls = np.vstack((cat_controls, DM2Arr(u[:, 0])))
         t = np.vstack((t, t0))
 
