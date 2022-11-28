@@ -280,6 +280,69 @@ class Solver:
         return args
 
 
+class RobotModel:
+    def __init__(self) -> None:
+        self._type = "differential_drive"
+
+    def update_state(self, st, con, dt):
+        state = ca.vertcat(ca.SX.sym("x"), ca.SX.sym("y"), ca.SX.sym("theta"))
+        control = ca.vertcat(ca.SX.sym("v"), ca.SX.sym("omega"))
+        f = self._differential_drive(state, control)
+
+        k1 = f(st, con)
+        k2 = f(st + k1 * dt / 2.0, con)
+        k3 = f(st + k2 * dt / 2.0, con)
+        k4 = f(st + k3 * dt, con)
+
+        st_next = st + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * dt / 6.0
+        return st_next
+
+    def _differential_drive(self, st, con):
+        yaw = st[2]
+        v = con[0]
+        omega = con[1]
+
+        # dx/dt, dy/dt, dyaw/dt
+        rhs = ca.vertcat(v * ca.cos(yaw), v * ca.sin(yaw), omega)
+        return ca.Function("f", [st, con], [rhs])
+
+    # def _mecanum_whell(self, states, controls):
+    #     """Mecanum wheel transfer function which can be found here:
+    #     https://www.researchgate.net/publication/334319114_Model_Predictive_Control_for_a_Mecanum-wheeled_robot_in_Dynamical_Environments
+
+    #     Returns:
+    #         [type]: [description]
+    #     """
+
+    #     theta = states[2]
+
+    #     # Robot specs
+    #     # rob_diam = 0.3  # diameter of the robot
+    #     wheel_radius = 1  # wheel radius
+    #     Lx = 0.3  # L in J Matrix (half robot x-axis length)
+    #     Ly = 0.3  # l in J Matrix (half robot y-axis length)
+
+    #     # discretization model (e.g. x2 = f(x1, v, t) = x1 + v * dt)
+    #     rot_3d_z = ca.vertcat(
+    #         ca.horzcat(ca.cos(theta), -ca.sin(theta), 0),
+    #         ca.horzcat(ca.sin(theta), ca.cos(theta), 0),
+    #         ca.horzcat(0, 0, 1),
+    #     )
+    #     J = (wheel_radius / 4) * ca.DM(
+    #         [
+    #             [1, 1, 1, 1],
+    #             [-1, 1, 1, -1],
+    #             [-1 / (Lx + Ly), 1 / (Lx + Ly), -1 / (Lx + Ly), 1 / (Lx + Ly)],
+    #         ]
+    #     )
+    #     # RHS = states + J @ controls * step_horizon  # Euler discretization
+    #     RHS = rot_3d_z @ J @ controls
+    #     # maps controls from [va, vb, vc, vd].T to [vx, vy, omega].T
+    #     f = ca.Function("f", [states, controls], [RHS])
+
+    #     return f
+
+
 # void test_get_mpc_args() {
 #   StVec st_i(1, 2, 3);
 
