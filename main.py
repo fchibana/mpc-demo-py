@@ -5,7 +5,7 @@ Problem: point stabilization
 
 import math
 
-from mpc_demo.casadi_solver import Simulation
+from mpc_demo import Simulation
 
 
 def main():
