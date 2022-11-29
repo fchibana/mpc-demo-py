@@ -2,8 +2,16 @@ import math
 import sys
 from enum import auto
 from enum import Enum
+from time import time
 
 import casadi as ca
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib import animation
+
+
+def to_array(dm):
+    return np.array(dm.full())
 
 
 class ProblemType(Enum):
@@ -12,16 +20,14 @@ class ProblemType(Enum):
 
 
 class Solver:
-    def __init__(self, type="point_stabilization") -> None:
+    def __init__(
+        self, n_la: int, dt: float, type="point_stabilization", n_states=3, n_controls=2
+    ) -> None:
 
-        # number of states (x, y, yaw)
-        self._n_states = 3
-        # number of controls (v, omega)
-        self._n_controls = 2
-
-        # look-ahead number
-        self._n_la = 10
-        self._dt = 0.2
+        self._n_la = n_la
+        self._dt = dt
+        self._n_states = n_states
+        self._n_controls = n_controls
 
         if type == "point_stabilization":
             self._type = ProblemType.PS
@@ -31,8 +37,8 @@ class Solver:
             self._weight_yaw = 0.01
             self._weight_v = 0.5
             self._weight_omega = 0.05
-        else:
-            # trajectory tracking
+
+        elif type == "trajectory_tracking":
             self._type = ProblemType.TT
 
             self._weight_x = 0.99
@@ -41,6 +47,11 @@ class Solver:
             self._weight_v = 0.05
             self._weight_omega = 0.05
 
+        else:
+            print("[ERROR] unknown type")
+            sys.exit(1)
+
+        # reset optimizer results
         self.reset()
         self._solver = self._get_nlp_solver()
         self._bounds = self._get_bounds()
@@ -126,7 +137,6 @@ class Solver:
         # )
         # print(res)
 
-    # def _get_nlp_solver(self) -> ca.Function:
     def _get_nlp_solver(self) -> ca.Function:
 
         # matrix containing all states over all time steps +1 (each column is a state vector)
@@ -429,3 +439,203 @@ class RobotModel:
         f = ca.Function("f", [states, controls], [RHS])
 
         return f
+
+
+class Simulation:
+    def __init__(self, n_la: int, dt: float, max_sim_time=200) -> None:
+
+        self._n_la = n_la
+        self._dt = dt
+        self._max_sim_time = max_sim_time
+
+        self._n_states = 3
+        self._n_controls = 2
+
+    def run_point_stabilization(self, initial_pose: list, target_pose: list):
+
+        current_state = ca.DM(initial_pose)
+        target_state = ca.DM(target_pose)
+
+        # initialize the decision variables
+        # TODO: rename
+        initial_states = ca.repmat(current_state, 1, self._n_la + 1)
+        initial_controls = ca.DM.zeros((self._n_controls, self._n_la))
+
+        # history variables
+        # TODO: rename
+        cat_states = to_array(initial_states)
+        cat_controls = to_array(initial_controls[:, 0])
+        times = np.array([[0]])
+
+        # simulation state
+        mpc_iter = 0
+
+        solver = Solver(self._n_la, self._dt)
+
+        # start a chronometer to time the whole loop
+        main_loop = time()  # return time in sec
+
+        goal_reached = False
+
+        while mpc_iter * self._dt < self._max_sim_time:
+            if self._is_goal_reached(current_state, target_state):
+                goal_reached = True
+                break
+
+            # start a chronometer to time one iteration
+            t1 = time()
+
+            initial_conditions = ca.vertcat(
+                ca.reshape(initial_states, self._n_states * (self._n_la + 1), 1),
+                ca.reshape(initial_controls, self._n_controls * self._n_la, 1),
+            )
+            parameters_vec = ca.vertcat(current_state, target_state)
+
+            solver.reset()
+            solver.solve(initial_conditions, parameters_vec)
+            opt_states = solver._opt_states
+            opt_controls = solver._opt_controls
+
+            # update history variables (for simulation)
+            cat_states = np.dstack((cat_states, to_array(opt_states)))
+            cat_controls = np.vstack((cat_controls, to_array(opt_controls[:, 0])))
+            times = np.vstack((times, time() - t1))
+
+            # update the state of the vehicle using it's current pose and optimal control
+            current_state = self._update_state(current_state, opt_controls[:, 0])
+            # update the initial conditions
+            initial_states, initial_controls = self._update_initial_conditions(
+                opt_states, opt_controls
+            )
+
+            mpc_iter += mpc_iter
+
+        main_loop_time = time()
+        ss_error = ca.norm_2(current_state - target_state)
+
+        print("\n\n")
+        if not goal_reached:
+            print("Simulation timeout")
+        print("Total time: ", main_loop_time - main_loop)
+        print("avg iteration time: ", np.array(times).mean() * 1000, "ms")
+        print("final error: ", ss_error)
+
+        # show results
+        # simulate(
+        #     cat_states,
+        #     cat_controls,
+        #     times,
+        #     self._dt,
+        #     self._n_la,
+        #     np.asarray(initial_pose + target_pose),
+        #     save=False,
+        # )
+
+        self._show(cat_states, cat_controls, times, np.asarray(initial_pose + target_pose))
+
+    def _is_goal_reached(self, current_state, target_state, tol=1e-1):
+        return ca.norm_2(current_state - target_state) < tol
+
+    def _update_state(self, st, con):
+        robot = RobotModel()
+        # TODO: add noise
+        st_next = robot.update_state(st, con, self._dt)
+
+        return st_next
+
+    def _update_initial_conditions(self, states, controls):
+
+        states = ca.horzcat(states[:, 1:], ca.reshape(states[:, -1], -1, 1))
+        controls = ca.horzcat(controls[:, 1:], ca.reshape(controls[:, -1], -1, 1))
+
+        return states, controls
+
+    def _show(self, cat_states, cat_controls, t, reference, save=False):
+
+        def create_triangle(state=[0, 0, 0], h=1, w=0.5, update=False):
+            x, y, th = state
+            triangle = np.array([[h, 0], [0, w / 2], [0, -w / 2], [h, 0]]).T
+            rotation_matrix = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
+
+            coords = np.array([[x, y]]) + (rotation_matrix @ triangle).T
+            if update:
+                return coords
+            else:
+                return coords[:3, :]
+
+        def init():
+            return (
+                path,
+                horizon,
+                current_state,
+                target_state,
+            )
+
+        def animate(i):
+            # get variables
+            x = cat_states[0, 0, i]
+            y = cat_states[1, 0, i]
+            th = cat_states[2, 0, i]
+
+            # update path
+            if i == 0:
+                path.set_data(np.array([]), np.array([]))
+            x_new = np.hstack((path.get_xdata(), x))
+            y_new = np.hstack((path.get_ydata(), y))
+            path.set_data(x_new, y_new)
+
+            # update horizon
+            x_new = cat_states[0, :, i]
+            y_new = cat_states[1, :, i]
+            horizon.set_data(x_new, y_new)
+
+            # update current_state
+            current_state.set_xy(create_triangle([x, y, th], update=True))
+
+            # update target_state
+            # xy = target_state.get_xy()
+            # target_state.set_xy(xy)
+
+            return (
+                path,
+                horizon,
+                current_state,
+                target_state,
+            )
+
+        # create figure and axes
+        fig, ax = plt.subplots(figsize=(6, 6))
+        min_scale = min(reference[0], reference[1], reference[3], reference[4]) - 2
+        max_scale = max(reference[0], reference[1], reference[3], reference[4]) + 2
+        ax.set_xlim(left=min_scale, right=max_scale)
+        ax.set_ylim(bottom=min_scale, top=max_scale)
+
+        # create lines:
+        #   path
+        (path,) = ax.plot([], [], "k", linewidth=2)
+        #   horizon
+        (horizon,) = ax.plot([], [], "x-g", alpha=0.5)
+        #   current_state
+        current_triangle = create_triangle(reference[:3])
+        current_state = ax.fill(current_triangle[:, 0], current_triangle[:, 1], color="r")
+        current_state = current_state[0]
+        #   target_state
+        target_triangle = create_triangle(reference[3:])
+        target_state = ax.fill(target_triangle[:, 0], target_triangle[:, 1], color="b")
+        target_state = target_state[0]
+
+        sim = animation.FuncAnimation(
+            fig=fig,
+            func=animate,
+            init_func=init,
+            frames=len(t),
+            interval=self._dt * 100,
+            blit=True,
+            repeat=True,
+        )
+        plt.show()
+
+        if save:
+            sim.save("./animation" + str(time()) + ".gif", writer="ffmpeg", fps=30)
+
+        return
